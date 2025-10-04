@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+torch
+redis
+psycopg2-binary
+# timescale-toolkit has been removed - it's a PostgreSQL extension, not a Python package
+mcp
+python-dotenv

@@ -1,0 +1,62 @@
+services:
+  triepod-memory-cache:
+    build: .
+    container_name: triepod-memory-cache
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    depends_on:
+      - triepod-redis
+      - triepod-timescaledb
+    environment:
+      - PG_HOST=triepod-timescaledb
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=triepod-redis
+      - REDIS_PORT=6379
+      - NEO4J_URI=neo4j://host.docker.internal:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - CHROMA_HOST=host.docker.internal
+      - CHROMA_PORT=8001
+      - QDRANT_URL=http://host.docker.internal:6333
+      - LLM_CACHE_PREFIX=llm_cache_prod
+      - LLM_CACHE_TTL=3600
+    volumes:
+      - ./app:/app:rw
+      - /home/bryan/.claude/debug:/host/claude/debug:rw
+      - /home/bryan/mcp-servers/remember-me-mcp:/host/remember-me-mcp:rw
+      - /home/bryan/mcp-servers/remember-me-mcp/wrapper-scripts:/host/wrapper-scripts:rw
+      - triepod_shared_storage:/shared/storage:rw
+
+  triepod-redis:
+    image: redis:7
+    container_name: triepod-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - triepod_redis_data:/data
+
+  triepod-timescaledb:
+    image: timescale/timescaledb-ha:pg14-latest
+    container_name: triepod-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: mcpdb
+      POSTGRES_USER: mcpuser
+    ports:
+      - "5432:5432"
+    volumes:
+      - triepod_timescale_data:/var/lib/postgresql/data
+
+volumes:
+  triepod_shared_storage:
+    external: true
+    name: triepod-memory-cache_triepod_shared_storage
+  triepod_redis_data:
+    external: true
+    name: triepod-memory-cache_triepod_redis_data
+  triepod_timescale_data:
+    external: true
+    name: triepod-memory-cache_triepod_timescale_data

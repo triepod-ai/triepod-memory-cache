@@ -8,6 +8,8 @@ services:
     depends_on:
       - triepod-redis
       - triepod-timescaledb
+    ports:
+      - "10750:10750"
     environment:
       - PG_HOST=triepod-timescaledb
       - PYTHONUNBUFFERED=1
@@ -21,6 +23,7 @@ services:
       - QDRANT_URL=http://host.docker.internal:6333
       - LLM_CACHE_PREFIX=llm_cache_prod
       - LLM_CACHE_TTL=3600
+      - MCP_HTTP_PORT=10750
     volumes:
       - ./app:/app:rw
       - /home/bryan/.claude/debug:/host/claude/debug:rw

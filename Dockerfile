@@ -18,7 +18,7 @@ COPY ./app /app
 WORKDIR /app
 
 # Expose port
-EXPOSE 8080
+EXPOSE 10750
 
-# Run the MCP server
-CMD ["python", "app.py"]
+# Run the MCP server with streamable HTTP transport
+CMD ["python3", "-m", "uvicorn", "http_app:app", "--host", "0.0.0.0", "--port", "10750"]

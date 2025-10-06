@@ -4,15 +4,16 @@
 
 ## Overview
 
-This project provides a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes Redis operations through standardized MCP tools. It supports both HTTP API mode and stdio transport for MCP protocol communication.
+This project provides a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes Redis operations through standardized MCP tools. It supports three transport modes: **MCP streamable HTTP** (primary, port 10750), **MCP stdio** (for CLI tools), and **HTTP API** (legacy REST endpoints).
 
 ### Key Features
 
 - **7 Redis MCP Tools**: Basic operations, LLM caching, and cache management
-- **Dual-Mode Operation**: HTTP API (FastAPI) + MCP stdio transport
+- **Triple-Mode Operation**: HTTP API (FastAPI) + MCP stdio transport + MCP streamable HTTP
 - **Docker Compose Stack**: Integrated Redis and TimescaleDB services
 - **Environment-Based Configuration**: Flexible prefix/TTL settings
 - **Clean stdio Protocol**: MCP-compliant wrapper script with proper logging
+- **Streamable HTTP Transport**: MCP Inspector compatible on port 10750
 
 ## Attribution
 
@@ -31,7 +32,7 @@ All claims in this README are substantiated with verifiable evidence. See [`CLAI
 - ✅ Documentation completeness assessment
 - ✅ AI readiness score: **HIGH**
 
-**Last Validated**: 2025-10-04
+**Last Validated**: 2025-10-06 (Streamable HTTP added)
 
 ## Architecture
 
@@ -43,19 +44,26 @@ triepod-memory-cache (Python MCP server)
   └── triepod-timescaledb (TimescaleDB on PostgreSQL 14)
 ```
 
-### Dual-Mode Operation
+### Triple-Mode Operation
 
-1. **HTTP API Mode** (default container process)
+1. **MCP Streamable HTTP Mode** (default container process)
+   - Runs: `uvicorn http_app:app --host 0.0.0.0 --port 10750`
+   - Starts: FastMCP streamable HTTP server on port 10750
+   - Endpoint: `/mcp` (GET, POST, DELETE methods)
+   - Purpose: MCP Inspector compatible streamable HTTP transport
+   - Features: Automatic tool schema generation, session management
+
+2. **HTTP API Mode** (legacy, available via app.py)
    - Runs: `python app.py`
    - Starts: Uvicorn FastAPI server on port 8080
-   - Purpose: HTTP REST API endpoints
+   - Purpose: HTTP REST API endpoints (e.g., `/predict`)
 
-2. **MCP stdio Mode** (via wrapper script)
+3. **MCP stdio Mode** (via wrapper script)
    - Runs: `python3 mcp_stdio.py` via `docker exec`
    - Transport: JSON-RPC over stdin/stdout
-   - Purpose: MCP protocol communication
+   - Purpose: MCP protocol communication for CLI tools
 
-**Important**: The separation prevents port conflicts and maintains clean stdio channels required by MCP protocol.
+**Important**: The streamable HTTP mode is the primary transport, providing MCP Inspector compatibility and proper tool schema generation.
 
 ## Setup
 
@@ -86,7 +94,7 @@ triepod-memory-cache (Python MCP server)
 
 ### Configuration
 
-Environment variables are set in `docker-compose.yml` and can be overridden via wrapper script or `~/auth/.env`:
+Environment variables are set in `docker-compose.yml` and can be overridden via wrapper script or `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -94,8 +102,62 @@ Environment variables are set in `docker-compose.yml` and can be overridden via 
 | `REDIS_PORT` | `6379` | Redis server port |
 | `LLM_CACHE_PREFIX` | `llm_cache_prod` | Prefix for LLM cache keys |
 | `LLM_CACHE_TTL` | `3600` | Default TTL for LLM cache (seconds) |
+| `MCP_HTTP_PORT` | `10750` | Port for MCP streamable HTTP transport |
+| `MCP_SERVER_PORT` | `8080` | Port for legacy HTTP API mode |
 
 ## Usage
+
+### MCP Streamable HTTP (Recommended)
+
+The server runs FastMCP's streamable HTTP transport by default on port 10750:
+
+```bash
+# Access MCP endpoint
+curl http://localhost:10750/mcp \
+  -H "Accept: application/json, text/event-stream"
+```
+
+**MCP Inspector Integration**:
+```json
+{
+  "mcpServers": {
+    "triepod-memory-cache": {
+      "url": "http://localhost:10750/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
+```
+
+**Features**:
+- ✅ MCP Inspector compatible
+- ✅ Automatic tool schema generation from Pydantic annotations
+- ✅ Session management handled by FastMCP
+- ✅ RESTful `/mcp` endpoint (GET, POST, DELETE)
+- ✅ All 7 Redis tools available via MCP protocol
+
+**How it works**:
+1. Session initialization: `GET /mcp` with `Accept: text/event-stream`
+2. Message exchange: `POST /mcp` with session ID
+3. Session cleanup: `DELETE /mcp` with session ID
+
+**Verification**:
+```bash
+# Check server is listening on port 10750
+netstat -tuln | grep 10750
+
+# Check endpoint responds (should return session ID error - expected behavior)
+curl http://localhost:10750/mcp -H "Accept: application/json, text/event-stream"
+
+# View server logs
+docker logs triepod-memory-cache --tail 20
+```
+
+Expected log output should show:
+```
+INFO:     Uvicorn running on http://0.0.0.0:10750
+StreamableHTTP session manager started
+```
 
 ### MCP stdio Wrapper
 
@@ -189,11 +251,13 @@ For detailed tool reference and usage examples, see: [`/home/bryan/docs/cli-tool
 ```
 /home/bryan/_containers/triepod-memory-cache/
 ├── app/
-│   ├── app.py              # Main FastAPI + MCP server (HTTP mode)
+│   ├── app.py              # Main MCP server with tool definitions
+│   ├── http_app.py         # Streamable HTTP ASGI app (port 10750)
 │   └── mcp_stdio.py        # MCP stdio entrypoint (separates concerns)
 ├── docker-compose.yml      # Multi-container orchestration
 ├── Dockerfile              # Container build definition
 ├── requirements.txt        # Python dependencies
+├── .env                    # Environment configuration
 └── README.md              # This file
 
 /home/bryan/
@@ -242,8 +306,12 @@ cd /home/bryan/_containers/triepod-memory-cache
 docker-compose up -d
 ```
 
-### Port 8080 already in use
-This is expected. The HTTP server runs as the container's main process. The MCP stdio wrapper uses `docker exec` to run a separate `mcp_stdio.py` process that doesn't bind any ports.
+### Port 10750 already in use
+The container runs the streamable HTTP transport on port 10750 by default. Check if another service is using this port:
+```bash
+netstat -tuln | grep 10750
+docker ps --filter "publish=10750"
+```
 
 ### stdio output contaminated
 Ensure you're using `~/run-redis-mcp.sh` wrapper, not running `docker exec` manually. The wrapper properly redirects all logs to files, keeping stdio clean for MCP JSON-RPC.
@@ -252,8 +320,33 @@ Ensure you're using `~/run-redis-mcp.sh` wrapper, not running `docker exec` manu
 
 Inherits MIT License from original chuckwilliams37/mcp-server-docker project.
 
+## Implementation Notes
+
+### Streamable HTTP Transport Pattern
+
+The streamable HTTP implementation follows proven patterns from production MCP servers:
+- **Pattern Source**: `mcp_streamable_http_patterns` collection in Qdrant
+- **Reference Implementations**:
+  - `mcp-server-qdrant` (port 10650)
+  - `chroma-mcp` (port 10550)
+- **Key Learnings**:
+  - ✅ Use FastMCP's `streamable_http_app()` method (not SSE)
+  - ✅ Create separate ASGI module for uvicorn import
+  - ✅ Proper port mapping in docker-compose (not `network_mode: host`)
+  - ✅ Automatic schema generation from Pydantic Field annotations
+
+**Critical Pattern**:
+```python
+# http_app.py - ASGI module
+from app import mcp
+app = mcp.streamable_http_app()  # Exposes /mcp endpoint
+```
+
+This ensures MCP Inspector compatibility and proper tool schema generation without manual schema construction.
+
 ## References
 
 - [Model Context Protocol Specification](https://spec.modelcontextprotocol.io)
 - [FastMCP Documentation](https://github.com/jlowin/fastmcp)
 - [Original Base Repository](https://github.com/chuckwilliams37/mcp-server-docker)
+- [MCP Streamable HTTP Patterns](https://docs.modelcontextprotocol.io/concepts/transports#http-with-sse)
